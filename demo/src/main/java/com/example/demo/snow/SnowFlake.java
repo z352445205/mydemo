@@ -1,86 +1,133 @@
 package com.example.demo.snow;
 
+import java.lang.management.ManagementFactory;
+import java.lang.management.RuntimeMXBean;
+import java.net.NetworkInterface;
+import java.net.SocketException;
+import java.util.Enumeration;
+
 /**
  * @author Zhengyn
  * @description   雪花算法
  * @create 21/1/19 21:36
  */
 public class SnowFlake {
-    //起始的时间戳
-    private final static long START_STAMP = 1480166465631L;
-    //每一部分占用的位数
-    private final static long SEQUENCE_BIT = 12; //序列号占用的位数
-    private final static long MACHINE_BIT = 5; //机器标识占用的位数
-    private final static long DATA_CENTER_BIT = 5;//数据中心占用的位数
-    //每一部分的最大值
-    private final static long MAX_DATA_CENTER_NUM = -1L ^ (-1L << DATA_CENTER_BIT);
-    private final static long MAX_MACHINE_NUM = -1L ^ (-1L << MACHINE_BIT);
-    private final static long MAX_SEQUENCE = -1L ^ (-1L << SEQUENCE_BIT);
-    //每一部分向左的位移
-    private final static long MACHINE_LEFT = SEQUENCE_BIT;
-    private final static long DATA_CENTER_LEFT = SEQUENCE_BIT + MACHINE_BIT;
-    private final static long TIMESTAMP_LEFT = DATA_CENTER_LEFT + DATA_CENTER_BIT;
-    private long dataCenterId; //数据中心
-    private long machineId; //机器标识
-    private long sequence = 0L; //序列号
-    private long lastStamp = -1L;//上一次时间戳
+    private final static long TWEPOCH = 12888349746579L;
+    // 机器标识位数
+    private final static long WORKER_ID_BITS = 5L;
+    // 数据中心标识位数
+    private final static long DATACENTER_ID_BITS = 5L;
+    // 毫秒内自增位数
+    private final static long SEQUENCE_BITS = 12L;
+    // 机器ID偏左移12位
+    private final static long WORKER_ID_SHIFT = SEQUENCE_BITS;
+    // 数据中心ID左移17位
+    private final static long DATACENTER_ID_SHIFT = SEQUENCE_BITS + WORKER_ID_SHIFT;
+    // 时间毫秒左移22位
+    private final static long TIMESTAMP_LEFT_SHIFT = SEQUENCE_BITS + WORKER_ID_SHIFT + DATACENTER_ID_SHIFT;
+    //sequence掩码，确保sequnce不会超出上限
+    private final static long SEQUENCE_MASK = ~(-1L << SEQUENCE_BITS);
+    //上次时间戳
+    private static long lastTimestamp = -1L;
+    //序列
+    private long sequence = 0L;
+    //服务器ID
+    private long workerId = 1L;
+    private static long workerMask = -1L ^ (-1L << WORKER_ID_BITS);
+    //进程编码
+    private long processId = 1L;
+    private static long processMask = -1L ^ (-1L << DATACENTER_ID_BITS);
 
-    public SnowFlake(long dataCenterId, long machineId) {
-        if (dataCenterId > MAX_DATA_CENTER_NUM || dataCenterId < 0) {
-            throw new IllegalArgumentException("dataCenterId can't be greaterthan MAX_DATA_CENTER_NUM or less than 0");
-        }
-        if (machineId > MAX_MACHINE_NUM || machineId < 0) {
-            throw new IllegalArgumentException("machineId can't be greater thanMAX_MACHINE_NUM or less than 0");
-        }
-        this.dataCenterId = dataCenterId;
-        this.machineId = machineId;
+    private static SnowFlake snowFlake;
+
+    static{
+        snowFlake = new SnowFlake();
+    }
+    public static synchronized long nextId(){
+        return snowFlake.getNextId();
     }
 
-    private String Prefix() {
-        String randomPrefix = "";
-        for (int i = 0; i < 2; i++) {
-            char c = (char) (Math.random() * 26 + 'A');
-            randomPrefix += c;
-        }
-        return randomPrefix;
+    private SnowFlake() {
+
+        //获取机器编码
+        this.workerId=this.getMachineNum();
+        //获取进程编码
+        RuntimeMXBean runtimeMXBean = ManagementFactory.getRuntimeMXBean();
+        this.processId= Long.parseLong(runtimeMXBean.getName().split("@")[0]);
+
+        //避免编码超出最大值
+        this.workerId=workerId & workerMask;
+        this.processId=processId & processMask;
     }
 
-    //产生下一个ID
-    public synchronized String nextId() {
-        long currStamp = getNewStamp();
-        if (currStamp < lastStamp) {
-            throw new RuntimeException("Clock moved backwards. Refusing to generate id");
+    public synchronized long getNextId() {
+        //获取时间戳
+        long timestamp = timeGen();
+        //如果时间戳小于上次时间戳则报错
+        if (timestamp < lastTimestamp) {
+            try {
+                throw new Exception("Clock moved backwards.  Refusing to generate id for " + (lastTimestamp - timestamp) + " milliseconds");
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
-        if (currStamp == lastStamp) {
-            //相同毫秒内，序列号自增
-            sequence = (sequence + 1) & MAX_SEQUENCE;
-            //同一毫秒的序列数已经达到最大
-            if (sequence == 0L) {
-                currStamp = getNextMill();
+        //如果时间戳与上次时间戳相同
+        if (lastTimestamp == timestamp) {
+            // 当前毫秒内，则+1，与sequenceMask确保sequence不会超出上限
+            sequence = (sequence + 1) & SEQUENCE_MASK;
+            if (sequence == 0) {
+                // 当前毫秒内计数满了，则等待下一秒
+                timestamp = tilNextMillis(lastTimestamp);
             }
         } else {
-            //不同毫秒内，序列号置为0
-            sequence = 0L;
+            sequence = 0;
         }
-        lastStamp = currStamp;
-        return Prefix() + ((currStamp - START_STAMP) << TIMESTAMP_LEFT //时间戳部分
-                | dataCenterId << DATA_CENTER_LEFT //数据中心部分
-                | machineId << MACHINE_LEFT //机器标识部分
-                | sequence); //序列号部分
+        lastTimestamp = timestamp;
+        // ID偏移组合生成最终的ID，并返回ID
+        return ((timestamp - TWEPOCH) << TIMESTAMP_LEFT_SHIFT) | (processId << DATACENTER_ID_SHIFT) | (workerId << WORKER_ID_SHIFT) | sequence;
     }
 
-    private long getNextMill() {
-        long mill = getNewStamp();
-        while (mill <= lastStamp) {
-            mill = getNewStamp();
+    /**
+     * 再次获取时间戳直到获取的时间戳与现有的不同
+     * @param lastTimestamp
+     * @return 下一个时间戳
+     */
+    private long tilNextMillis(final long lastTimestamp) {
+        long timestamp = this.timeGen();
+        while (timestamp <= lastTimestamp) {
+            timestamp = this.timeGen();
         }
-        return mill;
+        return timestamp;
     }
 
-    private long getNewStamp() {
+    private long timeGen() {
         return System.currentTimeMillis();
     }
 
+    /**
+     * 获取机器编码
+     * @return
+     */
+    private long getMachineNum(){
+        long machinePiece;
+        StringBuilder sb = new StringBuilder();
+        Enumeration<NetworkInterface> e = null;
+        try {
+            e = NetworkInterface.getNetworkInterfaces();
+        } catch (SocketException e1) {
+            e1.printStackTrace();
+        }
+        while (true) {
+            assert e != null;
+            if (!e.hasMoreElements()) {
+                break;
+            }
+            NetworkInterface ni = e.nextElement();
+            sb.append(ni.toString());
+        }
+        machinePiece = sb.toString().hashCode();
+        return machinePiece;
+    }
 
 }
 

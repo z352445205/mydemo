@@ -1,5 +1,8 @@
 package com.example.demo.juc;
 
+import org.springframework.boot.web.servlet.server.Session;
+
+import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -16,6 +19,7 @@ public class LockTest {
 
 
     public void increase() {
+        /*AbstractQueuedSynchronizer*/
         lock.lock();
         try {
             while (num != 0) {
