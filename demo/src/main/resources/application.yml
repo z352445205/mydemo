@@ -20,8 +20,5 @@ spring:
     username: root
     password: 123456
 
-
-
-
   application:
     name: zyn-demo

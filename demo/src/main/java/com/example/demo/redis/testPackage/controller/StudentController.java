@@ -38,5 +38,6 @@ public class StudentController {
     public ResponseResult<Student> getStudet(@RequestBody Student student) {
         log.info("");
         return ResponseResult.successResult(studentService.get(1));
+
     }
 }

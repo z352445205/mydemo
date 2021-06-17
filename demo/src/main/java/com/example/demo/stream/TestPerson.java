@@ -13,7 +13,7 @@ public class TestPerson {
         String result = Optional.ofNullable(person)
                 .map(per -> per.address)
                 .map(address -> address.country)
-                .map(country -> country.name).orElse(null);
+                .map(country -> country.name).orElse("泰安");
         System.out.println(result);
     }
     static class Person {

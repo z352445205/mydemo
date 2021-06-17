@@ -1,5 +1,7 @@
 package com.example.demo.demo.redis.testPackage.service;
 
+import java.util.HashMap;
+
 /**
  * @author Zhengyn
  * @description
